@@ -185,6 +185,7 @@ class Payday(object):
                  , is_suspicious
                  , goal
                  , false AS card_hold_ok
+                 , false AS discovered
               FROM participants
              WHERE is_suspicious IS NOT true
                AND claimed_time < %(ts_start)s
@@ -286,6 +287,9 @@ class Payday(object):
                 );
                 IF (NEW.amount <= tipper.new_balance OR tipper.card_hold_ok) THEN
                     EXECUTE transfer(NEW.tipper, NEW.tippee, NEW.amount, 'tip');
+                    UPDATE payday_participants
+                       SET discovered = true
+                     WHERE username = NEW.tippee;
                     RETURN NEW;
                 END IF;
                 RETURN NULL;
@@ -424,6 +428,27 @@ class Payday(object):
           FROM payday_participants p
          WHERE p.username = t.tipper
            AND p.card_hold_ok;
+
+        DO $$ DECLARE count integer;
+        BEGIN
+          LOOP
+            WITH updated_rows AS (
+            UPDATE payday_tips t
+               SET is_funded = true
+              FROM payday_participants p
+             WHERE t.is_funded IS NOT true
+               AND p.username = t.tipper
+               AND p.discovered is true
+               RETURNING *
+            )
+            SELECT COUNT(*) FROM updated_rows INTO count;
+
+            IF count = 0 THEN
+              EXIT;
+            END IF;
+          END LOOP;
+        END;
+        $$ LANGUAGE plpgsql;
 
         UPDATE payday_tips t
            SET is_funded = true
